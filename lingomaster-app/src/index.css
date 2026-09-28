@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+/* Hiệu ứng chạy vô hạn cho băng rôn quốc gia */
+@keyframes marquee {
+    0% {
+        transform: translateX(0%);
+    }
+    100% {
+        transform: translateX(-50%);
+    }
+}
+
+.animate-marquee {
+    display: flex;
+    width: max-content;
+    animation: marquee 25s linear infinite;
+}
+
+/* Hiệu ứng ẩn/hiện nút Scroll to Top */
+#backToTop {
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease-in-out;
+}
+
+#backToTop.show {
+    opacity: 1;
+    visibility: visible;
+}
