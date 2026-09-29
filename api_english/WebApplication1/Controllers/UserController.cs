@@ -6,6 +6,7 @@ using PayOS.Models.V2.PaymentRequests;
 using WebApplication1.Data;
 using WebApplication1.DTOs;
 using WebApplication1.Models;
+using WebApplication1.Service;
 
 namespace WebApplication1.Controllers
 {
@@ -15,11 +16,12 @@ namespace WebApplication1.Controllers
     {
         private readonly AppDbContext _context;
         private readonly IConfiguration _configuration;
-
-        public UserController(AppDbContext context, IConfiguration configuration)
+        private readonly EmailService _emailService;
+        public UserController(AppDbContext context, IConfiguration configuration, EmailService emailService)
         {
             _context = context;
             _configuration = configuration;
+            _emailService = emailService;
         }
 
         // DTOs
@@ -198,7 +200,6 @@ namespace WebApplication1.Controllers
                 var user = await _context.Users.FindAsync(req.UserId);
                 if (user == null) return NotFound(new { message = "Không tìm thấy người dùng!" });
 
-                // BẬT MOCK MODE ĐỂ TEST TRÊN ỨNG DỤNG MÀ KHÔNG CẦN TÀI KHOẢN PAYOS THẬT
                 bool isMockMode = false;
 
                 long amount = (req.PlanTitle != null && req.PlanTitle.Contains("Trọn Đời")) ? 11000 : 10000;
@@ -206,10 +207,15 @@ namespace WebApplication1.Controllers
 
                 if (isMockMode)
                 {
+                    if (!string.IsNullOrEmpty(user.Email))
+                    {
+                        await _emailService.SendProInvoiceEmailAsync(user.Email, req.PlanTitle ?? "Gói PRO", amount, orderCode);
+                    }
+
                     var mockResponse = new
                     {
                         error = 0,
-                        message = "Tạo link thanh toán thành công (Mock Mode)",
+                        message = "Tạo link thanh toán thành công & Đã gửi email (Mock Mode)",
                         data = new
                         {
                             checkoutUrl = "https://flutter.dev",
@@ -220,7 +226,6 @@ namespace WebApplication1.Controllers
                     return Ok(mockResponse);
                 }
 
-                // --- ĐOẠN CODE THẬT KHI DÙNG PAYOS ---
                 string clientId = "c864b83d-d60c-4f83-a527-f5dc072b7772";
                 string apiKey = "c3431ad7-109e-496e-ad3a-6074d3e25a4f";
                 string checksumKey = "0b487855d1f9546e8cd0bc90c3250c08d667f107185388d313d95cae1d69920f";
@@ -228,10 +233,11 @@ namespace WebApplication1.Controllers
                 PayOSClient payOS = new PayOSClient(clientId, apiKey, checksumKey);
 
                 string description = $"Nang cap PRO {req.UserId}";
-                string cancelUrl = "https://webhook.site/cancel";
-                string returnUrl = "https://webhook.site/success";
+                string cancelUrl = "lingomaster://payment-cancel";
 
-                // Khởi tạo request chuẩn theo tài liệu PayOS v2.x (không cần truyền Items)
+                // CẬP NHẬT RETURN URL ĐỂ ĐẨY VỀ APP FLUTTER
+                string returnUrl = "lingomaster://payment-success";
+
                 var paymentRequest = new CreatePaymentLinkRequest
                 {
                     OrderCode = orderCode,
@@ -243,10 +249,15 @@ namespace WebApplication1.Controllers
 
                 var createPayment = await payOS.PaymentRequests.CreateAsync(paymentRequest);
 
+                if (!string.IsNullOrEmpty(user.Email))
+                {
+                    await _emailService.SendProInvoiceEmailAsync(user.Email, req.PlanTitle ?? "Gói PRO", amount, orderCode);
+                }
+
                 return Ok(new
                 {
                     error = 0,
-                    message = "Tạo link thanh toán thành công",
+                    message = "Tạo link thanh toán thành công và đã gửi thông tin qua email",
                     data = createPayment
                 });
             }
