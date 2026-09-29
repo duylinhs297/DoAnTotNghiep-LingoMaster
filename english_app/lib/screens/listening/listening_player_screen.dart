@@ -161,11 +161,16 @@ class _ListeningPlayerScreenState extends State<ListeningPlayerScreen> {
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                           ),
                           onPressed: () async {
+                            // 1. Lưu lại Navigator hoặc BuildContext trước khi gọi async
+                            final navigator = Navigator.of(context);
+
                             await _markCompleted();
 
-                            // Kiểm tra mounted sau khoảng chờ bất đồng bộ của _markCompleted()
+                            // 2. Kiểm tra mounted trước khi dùng
                             if (!mounted) return;
-                            Navigator.of(context).pop(isCompleted);
+
+                            // 3. Dùng biến navigator đã lưu sẵn thay vì gọi trực tiếp context
+                            navigator.pop(isCompleted);
                           },
                           child: const Text('Đánh dấu hoàn thành bài nghe', style: TextStyle(fontWeight: FontWeight.bold)),
                         )

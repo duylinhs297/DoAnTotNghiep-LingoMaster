@@ -1,11 +1,12 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:app_links/app_links.dart';
 import '../../services/api_service.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class UpgradeProScreen extends StatefulWidget {
   final bool isDarkMode;
-  final int userId; // Nhận vào userId hiện tại của người dùng
+  final int userId;
 
   const UpgradeProScreen({super.key, required this.isDarkMode, required this.userId});
 
@@ -16,6 +17,8 @@ class UpgradeProScreen extends StatefulWidget {
 class _UpgradeProScreenState extends State<UpgradeProScreen> {
   int selectedPlanIndex = 1;
   bool isLoading = false;
+  late AppLinks _appLinks;
+  StreamSubscription<Uri>? _linkSubscription;
 
   final List<Map<String, dynamic>> plans = [
     {
@@ -32,80 +35,61 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
     },
   ];
 
-  // Hàm mở thanh toán MoMo Sandbox thật qua URL API
-  // Hàm mở trang thanh toán PayOS
+  @override
+  void initState() {
+    super.initState();
+    initDeepLinks(); // Lắng nghe sự kiện trả về app từ trình duyệt
+  }
+
+  @override
+  void dispose() {
+    _linkSubscription?.cancel();
+    super.dispose();
+  }
+
+  // Khởi tạo lắng nghe Deep Link từ hệ thống
+  void initDeepLinks() {
+    _appLinks = AppLinks();
+
+    _linkSubscription = _appLinks.uriLinkStream.listen((uri) async {
+      if (uri.toString().contains("payment-success")) {
+        // Khi trình duyệt đẩy về app với scheme thanh toán thành công
+        if (!mounted) return;
+        await _processUpgradeSuccess(plans[selectedPlanIndex]['title']);
+      }
+    });
+  }
+
   Future<void> _openPayOSPayment(BuildContext context) async {
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
     setState(() => isLoading = true);
 
     final plan = plans[selectedPlanIndex];
-    // Vẫn gọi hàm createMomoPayment (hoặc bạn có thể đổi tên hàm trong api_service thành createPayOSPayment cho chuẩn)
     final responseData = await UserApiService.createMomoPayment(widget.userId, plan['title']);
 
     setState(() => isLoading = false);
 
     if (responseData != null && responseData.containsKey('data')) {
-      // PayOS trả về đường dẫn thanh toán nằm trong data -> checkoutUrl
       final checkoutData = responseData['data'];
       final String checkoutUrl = checkoutData['checkoutUrl'] ?? '';
 
       final Uri uri = Uri.parse(checkoutUrl);
 
       if (await canLaunchUrl(uri)) {
+        // Mở trình duyệt bên ngoài (External Application)
         await launchUrl(uri, mode: LaunchMode.externalApplication);
-
-        if (context.mounted) {
-          _showWaitingForPaymentDialog(context);
-        }
       } else {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Không thể mở cổng thanh toán PayOS!')),
-          );
-        }
-      }
-    } else {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Không thể tạo giao dịch PayOS từ server!')),
+        scaffoldMessenger.showSnackBar(
+          const SnackBar(content: Text('Không thể mở cổng thanh toán PayOS!')),
         );
       }
+    } else {
+      scaffoldMessenger.showSnackBar(
+        const SnackBar(content: Text('Không thể tạo giao dịch PayOS từ server!')),
+      );
     }
   }
 
-  // Hộp thoại chờ xác nhận thanh toán sau khi bật trang MoMo Sandbox
-  // Hộp thoại chờ xác nhận thanh toán sau khi bật trang PayOS
-  void _showWaitingForPaymentDialog(BuildContext parentContext) {
-    showDialog(
-      context: parentContext,
-      barrierDismissible: false,
-      builder: (BuildContext dialogContext) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text('Đang chờ thanh toán'),
-          content: const Text('Vui lòng hoàn tất giao dịch quét mã QR trên ứng dụng ngân hàng. Sau khi xong, hãy bấm nút bên dưới để hệ thống cập nhật tài khoản.'),
-          actions: [
-            TextButton(
-              onPressed: () async {
-                // 1. Đóng hộp thoại chờ an toàn
-                if (dialogContext.mounted) {
-                  Navigator.of(dialogContext).pop();
-                }
-
-                // 2. Kiểm tra xem màn hình chính còn tồn tại không trước khi kích hoạt nâng cấp
-                if (!mounted) return;
-
-                // 3. Tiến hành gọi API nâng cấp PRO ngay lập tức cho user
-                await _processUpgradeSuccess(plans[selectedPlanIndex]['title']);
-              },
-              child: const Text('Tôi đã thanh toán xong', style: TextStyle(fontWeight: FontWeight.bold)),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  // Gửi request lên C# Backend hoặc hiển thị thông báo thành công
   Future<void> _processUpgradeSuccess(String planTitle) async {
     setState(() => isLoading = true);
 
@@ -113,7 +97,9 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
 
     setState(() => isLoading = false);
 
-    if (success && mounted) {
+    if (!mounted) return;
+
+    if (success) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('🎉 Chúc mừng! Tài khoản của bạn đã được nâng cấp lên PRO thành công!'),
@@ -122,7 +108,7 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
         ),
       );
       Navigator.pop(context, true); // Trả về true để profile load lại dữ liệu mới
-    } else if (mounted) {
+    } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Lỗi cập nhật trạng thái tài khoản, vui lòng thử lại!'),
@@ -167,13 +153,6 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
                   end: Alignment.bottomRight,
                 ),
                 borderRadius: BorderRadius.circular(24),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.indigo.withValues(alpha: 0.3),
-                    blurRadius: 12,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
               ),
               child: const Column(
                 children: [
@@ -184,18 +163,12 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
                     style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
                     textAlign: TextAlign.center,
                   ),
-                  SizedBox(height: 8),
-                  Text(
-                    'Nâng cấp ngay hôm nay để trải nghiệm học ngoại ngữ không giới hạn và bứt phá kỹ năng giao tiếp.',
-                    style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
-                    textAlign: TextAlign.center,
-                  ),
                 ],
               ),
             ),
             const SizedBox(height: 24),
 
-            // Danh sách các quyền lợi PRO
+            // Danh sách các quyền lợi PRO (Đã bổ sung vào đây)
             Text(
               'Đặc quyền khi lên PRO',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: textColor),
@@ -210,13 +183,13 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
               ),
               child: Column(
                 children: [
-                  _buildBenefitRow(Icons.mic_rounded, 'Chấm điểm phát âm AI không giới hạn số lần'),
+                  _buildBenefitRow(Icons.mic_rounded, 'Chấm điểm phát âm AI không giới hạn số lần', textColor),
                   const Divider(height: 24),
-                  _buildBenefitRow(Icons.all_inclusive_rounded, 'Truy cập toàn bộ kho bài nghe & từ vựng cao cấp'),
+                  _buildBenefitRow(Icons.all_inclusive_rounded, 'Truy cập toàn bộ kho bài nghe & từ vựng cao cấp', textColor),
                   const Divider(height: 24),
-                  _buildBenefitRow(Icons.psychology_rounded, 'Ôn tập thông minh tối ưu hóa theo thuật toán trí nhớ'),
+                  _buildBenefitRow(Icons.psychology_rounded, 'Ôn tập thông minh tối ưu hóa theo thuật toán trí nhớ', textColor),
                   const Divider(height: 24),
-                  _buildBenefitRow(Icons.block_rounded, 'Trải nghiệm học tập hoàn toàn không có quảng cáo'),
+                  _buildBenefitRow(Icons.block_rounded, 'Trải nghiệm học tập hoàn toàn không có quảng cáo', textColor),
                 ],
               ),
             ),
@@ -252,18 +225,6 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
                     ),
                     child: Row(
                       children: [
-                        Container(
-                          width: 22,
-                          height: 22,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: isSelected ? Colors.indigo : Colors.grey,
-                              width: isSelected ? 6 : 2,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 14),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -308,19 +269,15 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
               }),
             ),
             const SizedBox(height: 20),
-
-            // Nút Thanh Toán MoMo Thật (Gọi API Sandbox)
-            // Nút Thanh Toán PayOS
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: isLoading ? null : () => _openPayOSPayment(context), // Gọi hàm PayOS mới
+                onPressed: isLoading ? null : () => _openPayOSPayment(context),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF6366F1), // Đổi màu sang tông màu phù hợp với PayOS (Indigo/Purple)
+                  backgroundColor: const Color(0xFF6366F1),
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  elevation: 2,
                 ),
                 icon: isLoading
                     ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
@@ -337,15 +294,16 @@ class _UpgradeProScreenState extends State<UpgradeProScreen> {
     );
   }
 
-  Widget _buildBenefitRow(IconData icon, String text) {
+  // Hàm hỗ trợ tạo dòng quyền lợi
+  Widget _buildBenefitRow(IconData icon, String text, Color textColor) {
     return Row(
       children: [
-        Icon(icon, color: Colors.indigo, size: 22),
+        const Icon(Icons.check_circle_rounded, color: Colors.indigo, size: 22),
         const SizedBox(width: 14),
         Expanded(
           child: Text(
             text,
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: textColor),
           ),
         ),
       ],
